@@ -1,0 +1,4 @@
+productName,productId,category,price,quantity,unit,expiryDate,thresholdValue,imageUrl,availability
+Laptop,P001,Electronics,60000,5,Pieces,2027-12-31,2,laptop.jpg,In stock
+Laptop,P002,Electronics,60000,5,Pieces,2027-12-31,2,laptop2.jpg,In stock
+Shampoo,P003,Health & Beauty,250,20,Bottles,2026-12-31,5,shampoo.jpg,In stock

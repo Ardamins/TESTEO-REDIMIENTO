@@ -1,0 +1,162 @@
+.leftComponent {
+    position: relative;
+    width: 40%;
+    min-height: 100vh;
+    background: #FFFFFF;
+    padding: 2rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-top-right-radius: 30px;
+    border-bottom-right-radius: 30px;
+}
+
+.form-box {
+    width: 70%;
+    height: 80%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    align-items: left;
+    font-family: 'Inter', sans-serif;
+    gap: 15px;
+}
+
+.form-box .form-title {
+    display: flex;
+    flex-direction: column;
+    justify-content: left;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.form-box h2 {
+    font-size: 32px;
+    font-weight: bold;
+    color: #2B2F38;
+}
+
+.form-box p {
+    font-size: 15px;
+    color: #667085;
+}
+
+.form-box .subheading {
+    width: 270px;
+
+}
+
+.form-box .field {
+    width: 100%;
+    height: 70px;
+    display: flex;
+    flex-direction: column;
+    justify-content: left;
+    gap: 15px;
+}
+
+label {
+    font-size: 16px;
+    font-weight: 550;
+    margin-bottom: -7px;
+}
+
+.form-box input {
+    height: 42px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #ccc;
+    background-color: #F7FBFF;
+    font-size: 14px;
+    margin-bottom: 10px;
+    outline: none;
+}
+
+.btn {
+    height: 45px;
+    padding: 10px;
+    background: #242531;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 18px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+
+.link {
+    font-size: 14px;
+    color: #333;
+    text-align: right;
+    margin-bottom: -10px;
+}
+
+.Link {
+    text-align: center;
+}
+
+.link span {
+    color: #4e46e5;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.link span:hover {
+    text-decoration: underline;
+}
+
+
+
+@media (max-width:380px) {
+    .leftComponent {
+        width: 380px;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding-top: 80px;
+    }
+
+    .form-box {
+        width: 95%;
+
+    }
+
+    .form-box .form-title {
+        margin-bottom: -60px;
+        display: flex;
+        gap: 10px;
+    }
+
+    .form-box h2 {
+        font-size: 27px;
+    }
+
+    .form-box p {
+        font-size: 16px;
+    }
+
+    .form-box .field {
+        height: 70px;
+        margin-bottom: -60px;
+    }
+
+
+
+    .form-box input {
+        height: 45px;
+        font-size: 15px;
+        margin-bottom: -40px;
+    }
+
+    .btn {
+        margin-top: -60px;
+    }
+
+    .Link {
+        margin-top: -50px;
+    }
+}

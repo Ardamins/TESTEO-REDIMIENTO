@@ -1,0 +1,106 @@
+.order-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.order-modal {
+    background: #fff;
+    border-radius: 10px;
+    padding: 2rem;
+    width: 400px;
+    max-width: 95%;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.order-modal h2 {
+    margin-bottom: 1rem;
+    font-size: 1.5rem;
+    color: #222;
+}
+
+.order-modal p {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    color: #444;
+}
+
+.order-modal .modal-row {
+    width: 60%;
+    height: 50px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    margin-left: 60px;
+    margin-bottom: 10px;
+}
+
+.order-modal .modal-row label {
+    display: block;
+    font-weight: 600;
+    font-size: 18px;
+}
+
+.order-modal input {
+    width: 30%;
+    padding: 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 1rem;
+}
+
+.order-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.cancel-btn,
+.order-btn {
+    flex: 1;
+    padding: 0.7rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: 0.2s ease;
+}
+
+.cancel-btn {
+    background: #eee;
+}
+
+.cancel-btn:hover {
+    background: #ddd;
+}
+
+.order-btn {
+    background: #000;
+    color: white;
+    font-weight: 600;
+}
+
+.order-btn:hover {
+    background: #333;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

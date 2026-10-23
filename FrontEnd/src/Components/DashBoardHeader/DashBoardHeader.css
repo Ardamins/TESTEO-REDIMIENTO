@@ -1,0 +1,35 @@
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #424457;
+    color: white;
+    border-radius: 6px;
+    width: 100%;
+    /* padding: 5px; */
+}
+
+.dashboard-header h2 {
+    font-size: 25px;
+    margin: 5px 0;
+}
+
+.search-bar {
+    padding: 6px 10px;
+    border-radius: 17px;
+    border: none;
+    outline: none;
+    width: 250px;
+    height: 40px;
+    /* background-color: ; */
+}
+
+.search-bar::placeholder {
+    font-size: 16px;
+}
+
+@media (max-width:380px) {
+    .search-bar {
+        width: 180px;
+    }
+}

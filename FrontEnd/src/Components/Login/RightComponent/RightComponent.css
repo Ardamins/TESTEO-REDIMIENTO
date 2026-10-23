@@ -1,0 +1,46 @@
+.rightComponent {
+    width: 55%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Inter', sans-serif, serif;
+    background-color: #242531;
+}
+
+.middleBox {
+    width: 80%;
+    height: 70%;
+}
+
+.headerBox {
+    width: 100%;
+    height: 120px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.headerBox p {
+    font-size: 40px;
+    width: 300px;
+    color: white;
+}
+
+.contentBox {
+    width: 100%;
+    height: 395px;
+}
+
+.contentBox img {
+    width: 100%;
+    height: 100%;
+}
+
+
+@media (max-width:380px) {
+    .rightComponent {
+        display: none;
+    }
+}
