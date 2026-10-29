@@ -1,57 +1,63 @@
-import ProductModel from "../models/ProductModel.js";
-import InvoiceModel from "../models/InvoiceModel.js";
+// BackEnd/controllers/DashboardController.js
+import { pool } from '../config/db.js';
 
-const getMonthlyStats = (invoices, products) => {
-  const months = Array(12)
-    .fill()
-    .map((_, i) => ({ period: i + 1, sales: 0, purchase: 0 }));
+/* =============================================================
+   Helpers de series temporales (mismo contrato de salida
+   que la versión Mongoose)
+   ============================================================= */
 
-  // Sales from invoices
-  invoices.forEach((invoice) => {
-    if (invoice.status === "Paid" && invoice.invoiceDate) {
-      const monthIndex = new Date(invoice.invoiceDate).getMonth();
-      months[monthIndex].sales += invoice.amount || 0;
+function getMonthlyStats(paidInvoices, products) {
+  const months = Array.from({ length: 12 }, (_, i) => ({
+    period: i + 1,
+    sales: 0,
+    purchase: 0,
+  }));
+
+  paidInvoices.forEach((invoice) => {
+    if (invoice.invoice_date) {
+      const idx = new Date(invoice.invoice_date).getMonth();
+      months[idx].sales += Number(invoice.amount || 0);
     }
   });
 
-  // Purchases (estimated from sold units only)
   products.forEach((product) => {
-    if (product.createdAt) {
-      const monthIndex = new Date(product.createdAt).getMonth();
-      const purchasedValue = (product.sold || 0) * (product.price || 0);
-      months[monthIndex].purchase += purchasedValue;
+    if (product.created_at) {
+      const idx = new Date(product.created_at).getMonth();
+      const purchasedValue =
+        Number(product.sold || 0) * Number(product.price || 0);
+      months[idx].purchase += purchasedValue;
     }
   });
 
   return months;
-};
+}
 
-const getYearlyStats = (invoices, products) => {
+function getYearlyStats(paidInvoices, products) {
   const currentYear = new Date().getFullYear();
-  const yearRangeStart = currentYear - 2; // Last 2 years + current
-  const yearRangeEnd = currentYear + 2; // Up to next 2 years
+  const start = currentYear - 2;
+  const end = currentYear + 2;
 
   const yearlyStats = {};
-
-  for (let year = yearRangeStart; year <= yearRangeEnd; year++) {
-    yearlyStats[year] = { sales: 0, purchase: 0 };
+  for (let y = start; y <= end; y++) {
+    yearlyStats[y] = { sales: 0, purchase: 0 };
   }
 
-  invoices.forEach((invoice) => {
-    if (invoice.status === "Paid" && invoice.invoiceDate) {
-      const year = new Date(invoice.invoiceDate).getFullYear();
-      if (year >= yearRangeStart && year <= yearRangeEnd) {
-        yearlyStats[year].sales += invoice.amount || 0;
+  paidInvoices.forEach((invoice) => {
+    if (invoice.invoice_date) {
+      const y = new Date(invoice.invoice_date).getFullYear();
+      if (y >= start && y <= end) {
+        yearlyStats[y].sales += Number(invoice.amount || 0);
       }
     }
   });
 
   products.forEach((product) => {
-    if (product.createdAt) {
-      const year = new Date(product.createdAt).getFullYear();
-      if (year >= yearRangeStart && year <= yearRangeEnd) {
-        const purchasedValue = (product.sold || 0) * (product.price || 0);
-        yearlyStats[year].purchase += purchasedValue;
+    if (product.created_at) {
+      const y = new Date(product.created_at).getFullYear();
+      if (y >= start && y <= end) {
+        const purchasedValue =
+          Number(product.sold || 0) * Number(product.price || 0);
+        yearlyStats[y].purchase += purchasedValue;
       }
     }
   });
@@ -63,88 +69,114 @@ const getYearlyStats = (invoices, products) => {
       purchase: values.purchase,
     }))
     .sort((a, b) => a.period - b.period);
-};
+}
 
-const getDashboardStats = async (req, res) => {
+/* =============================================================
+   GET /api/dashboard/stats/:type  (monthly | yearly)
+   ============================================================= */
+export async function getDashboardStats(req, res) {
   try {
     const { type: paramType } = req.params;
     const { type: queryType } = req.query;
-    const type = paramType || queryType || "monthly";
+    const type = paramType || queryType || 'monthly';
 
-    const products = await ProductModel.find();
-    const invoices = await InvoiceModel.find();
-    const paidInvoices = invoices.filter((inv) => inv.status === "Paid");
-
-    // Unpaid invoices = products ordered but not yet received
-    const unpaidInvoices = invoices.filter((inv) => inv.status === "Unpaid");
-
-    const toBeReceived = unpaidInvoices.reduce(
-      (acc, inv) =>
-        acc +
-        (inv.products?.reduce((sum, p) => sum + (p.quantity || 0), 0) || 0),
-      0
+    /* --- Productos --- */
+    const [products] = await pool.query(
+      `SELECT id, name, price, stock, sold, category, image,
+              created_at
+       FROM products`
     );
 
-    // Sales Overview
+    /* --- Invoices (cabecera) --- */
+    const [invoices] = await pool.query(
+      `SELECT id, amount, status, invoice_date, customer_name
+       FROM invoices`
+    );
+
+    /* --- Detalle de invoices (para contar unidades) --- */
+    const [invoiceItems] = await pool.query(
+      `SELECT invoice_id, quantity FROM invoice_items`
+    );
+
+    /* Agrupamos cantidades por invoice_id */
+    const itemsByInvoice = invoiceItems.reduce((acc, row) => {
+      const key = row.invoice_id;
+      acc[key] = (acc[key] || 0) + Number(row.quantity || 0);
+      return acc;
+    }, {});
+
+    const paidInvoices = invoices.filter((i) => i.status === 'Paid');
+    const unpaidInvoices = invoices.filter((i) => i.status === 'Unpaid');
+
+    /* ---- Sales / Revenue ---- */
     const salesCount = paidInvoices.reduce(
-      (acc, inv) =>
-        acc +
-        (inv.products?.reduce((sum, p) => sum + (p.quantity || 0), 0) || 0),
+      (acc, inv) => acc + (itemsByInvoice[inv.id] || 0),
       0
     );
 
     const revenue = paidInvoices.reduce(
-      (acc, inv) => acc + (inv.amount || 0),
+      (acc, inv) => acc + Number(inv.amount || 0),
       0
     );
 
-    // Cost & Purchase Overview (only for sold units)
+    /* ---- Coste de unidades vendidas ---- */
     let totalSoldQuantity = 0;
     let totalCost = 0;
     let purchaseCount = 0;
 
-    products.forEach((product) => {
-      const soldQuantity = product.sold || 0;
-      totalSoldQuantity += soldQuantity;
+    products.forEach((p) => {
+      const sold = Number(p.sold || 0);
+      const price = Number(p.price || 0);
 
-      const productCost = soldQuantity * (product.price || 0);
-      totalCost += productCost;
+      totalSoldQuantity += sold;
+      totalCost += sold * price;
 
-      if (soldQuantity > 0) {
-        purchaseCount++;
-      }
+      if (sold > 0) purchaseCount++;
     });
+
+    /* ---- Pendiente de recibir (invoices Unpaid) ---- */
+    const toBeReceived = unpaidInvoices.reduce(
+      (acc, inv) => acc + (itemsByInvoice[inv.id] || 0),
+      0
+    );
 
     const canceledOrders = 0;
     const returns = 0;
     const profit = revenue - totalCost;
 
-    // Inventory Summary
+    /* ---- Inventario ---- */
     const quantityInHand = products.reduce(
-      (acc, p) => acc + (p.quantity || 0),
+      (acc, p) => acc + Number(p.stock || 0),
       0
     );
 
-    const categories = new Set(products.map((p) => p.category)).size;
-    const customers = invoices.map((inv) => inv.customer?.name).filter(Boolean);
-    const suppliers = new Set(customers).size;
+    const categories = new Set(
+      products.map((p) => p.category).filter(Boolean)
+    ).size;
 
-    // Top Products
+    const supplierNames = new Set(
+      invoices.map((i) => i.customer_name).filter(Boolean)
+    );
+    const suppliers = supplierNames.size;
+
+    /* ---- Top 5 productos vendidos ---- */
     const topProducts = products
-      .filter((product) => product.sold > 0)
-      .sort((a, b) => (b.sold || 0) - (a.sold || 0))
+      .filter((p) => Number(p.sold || 0) > 0)
+      .sort((a, b) => Number(b.sold || 0) - Number(a.sold || 0))
       .slice(0, 5)
-      .map((product) => ({
-        name: product.productName,
-        sold: product.sold || 0,
-        imageUrl: product.imageUrl || "",
+      .map((p) => ({
+        name: p.name,
+        sold: Number(p.sold || 0),
+        imageUrl: p.image || '',
       }));
 
+    /* ---- Series temporales ---- */
     const chartData =
-      type === "yearly"
-        ? getYearlyStats(invoices, products)
-        : getMonthlyStats(invoices, products);
+      type === 'yearly'
+        ? getYearlyStats(paidInvoices, products)
+        : getMonthlyStats(paidInvoices, products);
 
+    /* ---- Respuesta ---- */
     res.status(200).json({
       success: true,
       data: {
@@ -179,9 +211,7 @@ const getDashboardStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching dashboard stats:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
-};
-
-export { getDashboardStats };
+}

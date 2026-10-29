@@ -1,522 +1,251 @@
-import mongoose from "mongoose";
-import ProductModel from "../models/ProductModel.js";
-import InvoiceModel from "../models/InvoiceModel.js";
-import InventoryModel from "../models/InventoryModel.js";
-import path from "path";
-import fs from "fs";
-import csv from "csv-parser";
+// BackEnd/controllers/ProductController.js
+import { pool } from '../config/db.js';
 
-let isUpdatingStats = false;
-
-const updateInventoryStats = async () => {
-  if (isUpdatingStats) {
-    return;
-  }
-
-  isUpdatingStats = true;
-
+/* =========================================================
+   GET /api/products/get-all-products
+   ========================================================= */
+export async function getAllProducts(req, res) {
   try {
-    const products = await ProductModel.find();
+    const [rows] = await pool.query(
+      `SELECT id, name, price, stock, image, created_at
+       FROM products
+       ORDER BY id DESC`
+    );
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error('getAllProducts error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+}
 
-    if (!products || products.length === 0) {
-      return;
+/* =========================================================
+   POST /api/products/add-single-product
+   body: { name, price, stock }   + multipart file "image"
+   ========================================================= */
+export async function addProduct(req, res) {
+  try {
+    const { name, price, stock } = req.body;
+
+    if (!name || !price || stock === undefined) {
+      return res.status(400).json({
+        error: 'Missing required fields: name, price, stock',
+      });
     }
 
-    const categories = [...new Set(products.map((p) => p.category))].length;
-    const totalProducts = products.length;
+    const image = req.file ? `/uploads/${req.file.filename}` : null;
 
-    const inStockProducts = products.filter(
-      (p) => p.availability === "In stock"
-    ).length;
-
-    const lowStocksNotInStock = products.filter(
-      (p) => p.availability === "Out of stock"
-    ).length;
-
-    const lowStocksOrdered = products.filter(
-      (p) => p.availability === "Low stock"
-    ).length;
-
-    let totalRevenue = 0;
-    let productsWithSales = 0;
-
-    products.forEach((product) => {
-      const sold = parseInt(product.sold) || 0;
-      const price = parseFloat(product.price) || 0;
-      const productRevenue = sold * price;
-      totalRevenue += productRevenue;
-
-      if (sold > 0) {
-        productsWithSales++;
-      }
-    });
-
-    let topSellingProduct = { sold: 0, price: 0, productName: "None" };
-    let maxSold = 0;
-
-    products.forEach((product) => {
-      const sold = parseInt(product.sold) || 0;
-      if (sold > maxSold) {
-        maxSold = sold;
-        topSellingProduct = {
-          sold: sold,
-          price: parseFloat(product.price) || 0,
-          productName: product.productName,
-        };
-      }
-    });
-
-    const inventoryData = {
-      categories,
-      totalProducts,
-      revenue: totalRevenue,
-      topSelling: topSellingProduct.sold,
-      topSellingCost: topSellingProduct.sold * topSellingProduct.price,
-      lowStocksOrdered,
-      lowStocksNotInStock,
-      lastUpdated: new Date(),
-    };
-
-    await InventoryModel.findOneAndUpdate({}, inventoryData, {
-      upsert: true,
-      new: true,
-    });
-  } catch (error) {
-    console.error("Error updating inventory stats:", error);
-  } finally {
-    isUpdatingStats = false;
-  }
-};
-
-const initializeSoldFields = async () => {
-  try {
-    const result = await ProductModel.updateMany(
-      { sold: { $exists: false } },
-      { $set: { sold: 0 } }
+    const [result] = await pool.query(
+      'INSERT INTO products (name, price, stock, image) VALUES (?, ?, ?, ?)',
+      [name, Number(price), Number(stock), image]
     );
 
-    console.log(
-      `Initialized 'sold' field for ${result.modifiedCount} products`
-    );
-    return result.modifiedCount;
-  } catch (error) {
-    console.error("Error initializing sold fields:", error);
-    return 0;
+    res.status(201).json({
+      success: true,
+      message: 'Product added successfully',
+      id: result.insertId,
+    });
+  } catch (err) {
+    console.error('addProduct error:', err);
+    res.status(500).json({ error: 'DB error' });
   }
-};
+}
 
-const addSampleSalesData = async (req, res) => {
+/* =========================================================
+   POST /api/products/add-multiple-product
+   multipart file "csvFile"
+   ========================================================= */
+export async function addProductsFromCSV(req, res) {
   try {
-    const products = await ProductModel.find().limit(3);
-
-    if (products.length === 0) {
-      return res.status(404).json({ message: "No products found" });
+    if (!req.file) {
+      return res.status(400).json({ error: 'CSV file is required' });
     }
 
-    const updates = [];
+    const fs = await import('fs');
+    const path = await import('path');
+    const csv = (await import('csv-parser')).default;
 
-    if (products[0]) {
-      products[0].sold = 15;
-      updates.push(products[0].save());
+    const filePath = path.join(process.cwd(), 'uploads', req.file.filename);
+    const rows = [];
+
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => rows.push(row))
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    if (rows.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: 'Empty CSV file' });
     }
 
-    if (products[1]) {
-      products[1].sold = 8;
-      updates.push(products[1].save());
+    const inserted = [];
+    const failed = [];
+
+    for (const row of rows) {
+      try {
+        const name = (row.name || row.productName || '').trim();
+        const price = Number(row.price ?? 0);
+        const stock = Number(row.stock ?? row.quantity ?? 0);
+        const image = row.image ? String(row.image).trim() : null;
+
+        if (!name || !Number.isFinite(price) || !Number.isFinite(stock)) {
+          failed.push({ row, error: 'Invalid row' });
+          continue;
+        }
+
+        const [result] = await pool.query(
+          'INSERT INTO products (name, price, stock, image) VALUES (?, ?, ?, ?)',
+          [name, price, stock, image]
+        );
+
+        inserted.push({ id: result.insertId, name, price, stock, image });
+      } catch (e) {
+        failed.push({ row, error: e.message });
+      }
     }
 
-    if (products[2]) {
-      products[2].sold = 5;
-      updates.push(products[2].save());
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    if (inserted.length === 0) {
+      return res.status(400).json({
+        error: 'All products failed to import',
+        failed,
+      });
     }
 
-    await Promise.all(updates);
+    res.status(201).json({
+      success: true,
+      message: `${inserted.length} products inserted, ${failed.length} failed`,
+      products: inserted,
+      failed,
+    });
+  } catch (err) {
+    console.error('addProductsFromCSV error:', err);
+    res.status(500).json({ error: 'Error processing CSV', detail: err.message });
+  }
+}
 
-    await updateInventoryStats();
+/* =========================================================
+   PUT /api/products/update-product-availability/:productId
+   Recalcula el estado según stock (si tienes columna availability
+   en tu tabla, la actualiza; si no, la ignora).
+   ========================================================= */
+export async function updateProductAvailability(req, res) {
+  try {
+    const { productId } = req.params;
+
+    const [rows] = await pool.query(
+      'SELECT id, name, stock FROM products WHERE id = ?',
+      [productId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const product = rows[0];
+    const availability =
+      product.stock <= 0
+        ? 'Out of stock'
+        : product.stock < 10
+        ? 'Low stock'
+        : 'In stock';
+
+    // Si tu tabla tiene columna availability, descomenta la query:
+    // await pool.query('UPDATE products SET availability = ? WHERE id = ?',
+    //   [availability, productId]);
 
     res.status(200).json({
       success: true,
-      message: "Sample sales data added and stats updated",
-      updates: products.map((p) => ({
-        name: p.productName,
-        sold: p.sold,
-        price: p.price,
-        revenue: p.sold * p.price,
-      })),
+      id: product.id,
+      stock: product.stock,
+      availability,
     });
-  } catch (error) {
-    console.error("Error adding sample sales:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to add sample sales",
-      error: error.message,
-    });
+  } catch (err) {
+    console.error('updateProductAvailability error:', err);
+    res.status(500).json({ error: 'DB error' });
   }
-};
+}
 
-const getAllProducts = async (req, res) => {
-  try {
-    const products = await ProductModel.find().sort({ createdAt: -1 });
-    res.status(200).json({ success: true, products });
-  } catch (error) {
-    console.error("Error fetching products:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch products",
-      error: error.message,
-    });
-  }
-};
-
-const addProduct = async (req, res) => {
-  try {
-    const {
-      productName,
-      category,
-      price,
-      quantity,
-      unit,
-      expiryDate,
-      thresholdValue,
-    } = req.body;
-
-    if (!productName || !category || !price || !quantity || !unit) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields",
-      });
-    }
-
-    // ✅ Use uploaded file if present
-    const imageUrl = req.file ? `${req.file.filename}` : null;
-
-    const product = new ProductModel({
-      productName,
-      category,
-      price: parseFloat(price),
-      quantity: parseInt(quantity),
-      unit,
-      expiryDate: expiryDate ? new Date(expiryDate) : null,
-      thresholdValue: thresholdValue ? parseInt(thresholdValue) : 0,
-      imageUrl,
-      sold: 0,
-    });
-
-    const savedProduct = await product.save();
-
-    const totalAmount = savedProduct.price * savedProduct.quantity;
-    const invoice = new InvoiceModel({
-      products: [
-        {
-          productId: savedProduct._id,
-          productName: savedProduct.productName,
-          quantity: savedProduct.quantity,
-          price: savedProduct.price,
-        },
-      ],
-      amount: totalAmount,
-      status: "Unpaid",
-      invoiceDate: new Date(),
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      customer: {
-        name: "Direct Entry Customer",
-        email: "direct-entry@example.com",
-        address: "Added via single product form",
-      },
-    });
-
-    await invoice.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Product added successfully",
-      product: savedProduct,
-      invoice,
-    });
-  } catch (error) {
-    console.error("Error adding single product:", error);
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Product ID already exists. Please try again.",
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Error adding product",
-      error: error.message,
-    });
-  }
-};
-
-const addProductsFromCSV = async (req, res) => {
-  try {
-    if (!req.file)
-      return res.status(400).json({ message: "CSV file is required" });
-
-    const filePath = path.join(process.cwd(), "uploads", req.file.filename);
-    const products = [];
-
-    if (!fs.existsSync(filePath))
-      return res.status(400).json({ message: "Uploaded file not found" });
-
-    fs.createReadStream(filePath)
-      .pipe(csv())
-      .on("data", (row) => {
-        try {
-          // Trim all string values and handle empty strings
-          Object.keys(row).forEach((key) => {
-            if (row[key] === "" || row[key] === undefined) row[key] = null;
-            else if (typeof row[key] === "string") row[key] = row[key].trim();
-          });
-
-          const productData = {
-            productName: row.productName,
-            category: row.category,
-            price: row.price ? parseFloat(row.price) : 0,
-            quantity: row.quantity ? parseInt(row.quantity) : 0,
-            unit: row.unit,
-            expiryDate: row.expiryDate ? new Date(row.expiryDate) : null,
-            thresholdValue: row.thresholdValue
-              ? parseInt(row.thresholdValue)
-              : 0,
-            sold: 0, // default sold value
-          };
-
-          // Only add valid products
-          if (
-            productData.productName &&
-            productData.category &&
-            productData.price > 0 &&
-            productData.quantity > 0 &&
-            productData.unit
-          ) {
-            products.push(productData);
-          }
-        } catch (error) {
-          console.error("Error processing row:", row, error);
-        }
-      })
-      .on("end", async () => {
-        try {
-          if (products.length === 0) {
-            fs.unlinkSync(filePath);
-            return res
-              .status(400)
-              .json({ message: "No valid products found in CSV" });
-          }
-
-          const insertedProducts = [];
-          const failedProducts = [];
-
-          for (const product of products) {
-            try {
-              const productId = await ProductModel.generateProductId();
-              const newProduct = new ProductModel({ ...product, productId });
-              const savedProduct = await newProduct.save();
-              insertedProducts.push(savedProduct);
-            } catch (error) {
-              console.error("Failed to insert product:", product, error);
-              failedProducts.push({ product, error: error.message });
-            }
-          }
-
-          if (insertedProducts.length === 0) {
-            fs.unlinkSync(filePath);
-            return res.status(400).json({
-              message: "All products failed to import",
-              failedProducts,
-            });
-          }
-
-          // Create invoice
-          const totalAmount = insertedProducts.reduce(
-            (sum, p) => sum + p.price * p.quantity,
-            0
-          );
-
-          const invoiceProducts = insertedProducts.map((p) => ({
-            productId: p._id,
-            productName: p.productName,
-            quantity: p.quantity,
-            price: p.price,
-          }));
-
-          const invoice = new InvoiceModel({
-            products: invoiceProducts,
-            amount: totalAmount,
-            status: "Unpaid",
-            invoiceDate: new Date(),
-            dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            customer: {
-              name: "CSV Import Customer",
-              email: "csv-import@example.com",
-              address: "Imported via CSV",
-            },
-          });
-
-          await invoice.save();
-          fs.unlinkSync(filePath);
-
-          // Update inventory stats
-          setTimeout(() => updateInventoryStats(), 1000);
-
-          res.status(201).json({
-            success: true,
-            message: `${insertedProducts.length} products added successfully, ${failedProducts.length} failed`,
-            products: insertedProducts,
-            failedProducts,
-            invoice,
-            totalAmount,
-          });
-        } catch (error) {
-          console.error("Insert error:", error);
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-          res.status(500).json({
-            message: "Error inserting products",
-            error: error.message,
-          });
-        }
-      })
-      .on("error", (error) => {
-        console.error("CSV parsing error:", error);
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        res
-          .status(500)
-          .json({ message: "Error parsing CSV file", error: error.message });
-      });
-  } catch (error) {
-    console.error("General error:", error);
-    res
-      .status(500)
-      .json({ message: "Error processing file", error: error.message });
-  }
-};
-
-const updateProductAvailability = async (req, res) => {
-  try {
-    const products = await ProductModel.find();
-    for (let product of products) {
-      if (product.expiryDate && new Date(product.expiryDate) < new Date()) {
-        product.quantity = 0;
-        product.availability = "Out of stock";
-      } else if (product.quantity === 0) product.availability = "Out of stock";
-      else if (product.quantity < product.thresholdValue)
-        product.availability = "Low stock";
-      else product.availability = "In stock";
-
-      await product.save();
-    }
-
-    setTimeout(() => updateInventoryStats(), 1000);
-
-    res
-      .status(200)
-      .json({ message: "Products availability updated successfully" });
-  } catch (error) {
-    console.error("Error updating availability:", error);
-    res
-      .status(500)
-      .json({ message: "Error updating product availability", error });
-  }
-};
-
-const orderProduct = async (req, res) => {
+/* =========================================================
+   POST /api/products/order-product/:productId
+   body: { quantity }
+   Descuenta stock y registra la venta de forma atómica.
+   ========================================================= */
+export async function orderProduct(req, res) {
+  const conn = await pool.getConnection();
   try {
     const { productId } = req.params;
-    const { quantity } = req.body;
+    const quantity = Number(req.body?.quantity);
 
-    if (!quantity || quantity <= 0)
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      conn.release();
       return res.status(400).json({
-        success: false,
-        message: "Quantity is required and must be greater than 0",
-      });
-
-    const product = await ProductModel.findById(productId);
-    if (!product)
-      return res
-        .status(404)
-        .json({ success: false, message: "Product not found" });
-
-    if (product.quantity < quantity) {
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient stock. Only ${product.quantity} units available`,
+        error: 'Quantity is required and must be > 0',
       });
     }
 
-    const previousSold = parseInt(product.sold) || 0;
-    product.quantity -= quantity;
-    product.sold = previousSold + quantity;
+    await conn.beginTransaction();
 
-    console.log(
-      `${product.productName}: Updated sold from ${previousSold} to ${product.sold}`
+    const [rows] = await conn.query(
+      'SELECT id, name, price, stock FROM products WHERE id = ? FOR UPDATE',
+      [productId]
     );
 
-    if (product.quantity === 0) product.availability = "Out of stock";
-    else if (product.quantity < product.thresholdValue)
-      product.availability = "Low stock";
-    else product.availability = "In stock";
+    if (rows.length === 0) {
+      await conn.rollback();
+      conn.release();
+      return res.status(404).json({ error: 'Product not found' });
+    }
 
-    await product.save();
+    const product = rows[0];
 
-    const invoiceData = {
-      products: [
-        {
-          productId: product._id,
-          productName: product.productName,
-          quantity,
-          price: product.price,
-          unit: product.unit,
-        },
-      ],
-      amount: product.price * quantity,
-      status: "Unpaid",
-      invoiceDate: new Date(),
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      customer: { name: "Walk-in Customer", email: "N/A", address: "N/A" },
-    };
+    if (product.stock < quantity) {
+      await conn.rollback();
+      conn.release();
+      return res.status(400).json({
+        error: `Insufficient stock. Only ${product.stock} units available`,
+      });
+    }
 
-    const savedInvoice = await new InvoiceModel(invoiceData).save();
+    await conn.query(
+      'UPDATE products SET stock = stock - ? WHERE id = ?',
+      [quantity, productId]
+    );
 
-    setTimeout(() => updateInventoryStats(), 1000);
+    await conn.commit();
+    conn.release();
 
     res.status(201).json({
       success: true,
-      message: "Product ordered successfully and invoice created",
+      message: 'Order registered',
       product: {
-        id: product._id,
-        name: product.productName,
-        remainingQuantity: product.quantity,
-        availability: product.availability,
-        sold: product.sold,
-      },
-      invoice: {
-        id: savedInvoice._id,
-        amount: savedInvoice.amount,
-        status: savedInvoice.status,
-        dueDate: savedInvoice.dueDate,
+        id: product.id,
+        name: product.name,
+        remainingStock: product.stock - quantity,
+        unitPrice: product.price,
+        total: product.price * quantity,
       },
     });
-  } catch (error) {
-    console.error("Error ordering product:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to order product",
-      error: error.message,
-      body: req.body,
-    });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    conn.release();
+    console.error('orderProduct error:', err);
+    res.status(500).json({ error: 'DB error' });
   }
-};
+}
 
-export {
-  getAllProducts,
-  addProduct,
-  addProductsFromCSV,
-  updateProductAvailability,
-  orderProduct,
-  addSampleSalesData,
-  initializeSoldFields,
-};
+/* =========================================================
+   Compatibilidad con otros archivos que importaban estos
+   nombres desde el controlador anterior (Mongoose).
+   Se dejan como stubs seguros para no romper imports.
+   ========================================================= */
+export async function addSampleSalesData(req, res) {
+  res.status(501).json({ error: 'Not implemented for MySQL yet' });
+}
+
+export async function initializeSoldFields(req, res) {
+  res.status(501).json({ error: 'Not implemented for MySQL yet' });
+}
